@@ -30,6 +30,7 @@ import (
 	"github.com/432539/gpt2api/internal/scheduler"
 	"github.com/432539/gpt2api/internal/server"
 	"github.com/432539/gpt2api/internal/settings"
+	"github.com/432539/gpt2api/internal/upstream/chatgpt"
 	"github.com/432539/gpt2api/internal/usage"
 	"github.com/432539/gpt2api/internal/user"
 	"github.com/432539/gpt2api/pkg/crypto"
@@ -149,7 +150,13 @@ func main() {
 	}
 
 	imageDAO := image.NewDAO(sqldb)
-	imageRunner := image.NewRunner(sched, imageDAO)
+	// Turnstile solver (optional): set upstream.turnstile_solver_url in config.yaml
+	var turnstileSolver chatgpt.TurnstileSolver
+	if cfg.Upstream.TurnstileSolverURL != "" {
+		turnstileSolver = chatgpt.NewHTTPTurnstileSolver(cfg.Upstream.TurnstileSolverURL)
+		log.Info("turnstile solver enabled", zap.String("url", cfg.Upstream.TurnstileSolverURL))
+	}
+	imageRunner := image.NewRunner(sched, imageDAO, turnstileSolver)
 	imageRunner.SetQuotaDecrementor(accDAO) // 生图成功后立即扣减账号额度
 	imagesH := &gateway.ImagesHandler{
 		Handler: gwH,
