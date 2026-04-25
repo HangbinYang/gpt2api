@@ -53,6 +53,7 @@ upstream:
   base_url: "https://chatgpt.com"
   request_timeout_sec: 60
   sse_read_timeout_sec: 300
+  turnstile_solver_url: "" # 可选:外部 Turnstile 解算服务 URL
 
 # 支付(易支付)
 epay:
