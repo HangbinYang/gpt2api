@@ -156,18 +156,34 @@ func (r *Runner) Run(ctx context.Context, opt RunOptions) *RunResult {
 
 	// 落库
 	if r.dao != nil && opt.TaskID != "" {
+		persistCtx, cancelPersist := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelPersist()
 		if result.Status == StatusSuccess {
-			_ = r.dao.MarkSuccess(ctx, opt.TaskID, result.ConversationID,
-				result.FileIDs, result.SignedURLs, 0 /* credit_cost 由网关负责写 */)
+			if err := r.dao.MarkSuccess(persistCtx, opt.TaskID, result.ConversationID,
+				result.FileIDs, result.SignedURLs, 0 /* credit_cost 由网关负责写 */); err != nil {
+				logger.L().Error("image runner mark success failed",
+					zap.String("task_id", opt.TaskID),
+					zap.Error(err))
+			}
 			if r.quotaDecr != nil && result.AccountID > 0 {
 				n := len(result.FileIDs)
 				if n == 0 {
 					n = opt.N
 				}
-				_ = r.quotaDecr.DecrQuota(context.Background(), result.AccountID, n)
+				if err := r.quotaDecr.DecrQuota(context.Background(), result.AccountID, n); err != nil {
+					logger.L().Warn("image runner decrement quota failed",
+						zap.String("task_id", opt.TaskID),
+						zap.Uint64("account_id", result.AccountID),
+						zap.Error(err))
+				}
 			}
 		} else {
-			_ = r.dao.MarkFailed(ctx, opt.TaskID, result.ErrorCode)
+			if err := r.dao.MarkFailed(persistCtx, opt.TaskID, result.ErrorCode); err != nil {
+				logger.L().Error("image runner mark failed failed",
+					zap.String("task_id", opt.TaskID),
+					zap.String("error_code", result.ErrorCode),
+					zap.Error(err))
+			}
 		}
 	}
 	return result

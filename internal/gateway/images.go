@@ -304,7 +304,13 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 
 	// 8) DAO 回写 credit_cost(Runner 已经 MarkSuccess,这里只补 credit_cost)
 	if h.DAO != nil {
-		_ = h.DAO.UpdateCost(c.Request.Context(), taskID, cost)
+		updateCtx, cancelUpdate := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := h.DAO.UpdateCost(updateCtx, taskID, cost); err != nil {
+			logger.L().Warn("image update cost failed",
+				zap.String("task_id", taskID),
+				zap.Error(err))
+		}
+		cancelUpdate()
 	}
 
 	// 9) 响应:URL 统一走自家代理,防止 chatgpt.com estuary/content 防盗链
@@ -506,7 +512,13 @@ func (h *ImagesHandler) handleChatAsImage(c *gin.Context, rec *usage.Log, ak *ap
 	}
 	_ = h.Keys.DAO().TouchUsage(context.Background(), ak.ID, c.ClientIP(), cost)
 	if h.DAO != nil {
-		_ = h.DAO.UpdateCost(c.Request.Context(), taskID, cost)
+		updateCtx, cancelUpdate := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := h.DAO.UpdateCost(updateCtx, taskID, cost); err != nil {
+			logger.L().Warn("chat image update cost failed",
+				zap.String("task_id", taskID),
+				zap.Error(err))
+		}
+		cancelUpdate()
 	}
 
 	rec.Status = usage.StatusSuccess
@@ -866,7 +878,13 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 	rec.CreditCost = cost
 	rec.ImageCount = len(res.SignedURLs)
 	if h.DAO != nil {
-		_ = h.DAO.UpdateCost(c.Request.Context(), taskID, cost)
+		updateCtx, cancelUpdate := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := h.DAO.UpdateCost(updateCtx, taskID, cost); err != nil {
+			logger.L().Warn("image edit update cost failed",
+				zap.String("task_id", taskID),
+				zap.Error(err))
+		}
+		cancelUpdate()
 	}
 
 	out := ImageGenResponse{
