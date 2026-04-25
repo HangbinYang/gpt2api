@@ -18,6 +18,7 @@ mysql:
 
 redis:
   addr: "127.0.0.1:6379"
+  username: ""          # Redis ACL 用户名,未启用 ACL 时留空
   password: ""
   db: 0
   # 开发期 100;生产推荐 500(锁 + 队列 + 令牌桶并发高)

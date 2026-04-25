@@ -13,6 +13,7 @@ import (
 // NewRedis 打开 Redis 连接。
 func NewRedis(cfg config.RedisConfig) (*redis.Client, error) {
 	c := redis.NewClient(&redis.Options{
+		Username: cfg.Username,
 		Addr:     cfg.Addr,
 		Password: cfg.Password,
 		DB:       cfg.DB,

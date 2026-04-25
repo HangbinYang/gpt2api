@@ -19,7 +19,7 @@ services:
       # mariadb-client 附带的 mariadb-dump(无 caching_sha2_password 插件)。
       - --default-authentication-plugin=mysql_native_password
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -32,13 +32,18 @@ services:
     image: redis:7-alpine
     container_name: gpt2api-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - "${REDIS_PASSWORD:-please_change_me_redis}"
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-please_change_me_redis}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -66,6 +71,7 @@ services:
       # 通过 GPT2API_* 覆盖 config.yaml 中的任一字段
       GPT2API_MYSQL_DSN: "${MYSQL_USER:-gpt2api}:${MYSQL_PASSWORD:-gpt2api}@tcp(mysql:3306)/${MYSQL_DATABASE:-gpt2api}?parseTime=true&loc=Local&charset=utf8mb4&collation=utf8mb4_unicode_ci"
       GPT2API_REDIS_ADDR: "redis:6379"
+      GPT2API_REDIS_PASSWORD: "${REDIS_PASSWORD:-please_change_me_redis}"
       GPT2API_BACKUP_DIR: /app/data/backups
       GPT2API_BACKUP_RETENTION: ${BACKUP_RETENTION:-30}
       GPT2API_BACKUP_ALLOW_RESTORE: ${BACKUP_ALLOW_RESTORE:-false}

@@ -51,7 +51,7 @@ ls -lh deploy/bin/gpt2api deploy/bin/goose web/dist/index.html
 
 ```bash
 cd deploy
-cp .env.example .env           # 修改 JWT_SECRET / CRYPTO_AES_KEY / MySQL 密码
+cp .env.example .env           # 修改 JWT_SECRET / CRYPTO_AES_KEY / MySQL / Redis 密码
 docker compose build server    # 把刚才的产物 COPY 进镜像
 docker compose up -d
 docker compose logs -f server  # 观察迁移 + 启动日志
@@ -71,14 +71,14 @@ docker compose logs -f server  # 观察迁移 + 启动日志
 | 只改了 `.env` | `docker compose up -d`(环境变量变化 compose 会自动感知并重建容器) |
 | 想秒重启 | `docker compose restart server` |
 
-默认暴露端口:
+默认监听端口:
 
 
 | 服务     | 端口     | 说明                   |
 | ------ | ------ | -------------------- |
 | server | `8080` | OpenAI 兼容网关 + 后台 API |
-| mysql  | `3306` | 业务数据库                |
-| redis  | `6379` | 锁 / 限流 / 缓存          |
+| mysql  | `127.0.0.1:3306` | 业务数据库(仅宿主机本地可访问) |
+| redis  | `127.0.0.1:6379` | 锁 / 限流 / 缓存(仅宿主机本地可访问) |
 
 
 ## 目录与数据卷
@@ -100,6 +100,10 @@ docker compose logs -f server  # 观察迁移 + 启动日志
 - `JWT_SECRET`:至少 32 字符随机串
 - `CRYPTO_AES_KEY`:**严格** 64 位 hex(32 字节 AES-256 key)
 - `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD`
+- `REDIS_PASSWORD`:至少 16 位随机串;compose 默认要求 Redis 认证
+
+compose 默认把 `mysql` / `redis` 绑定到宿主机 `127.0.0.1`,避免数据库端口直接暴露公网。
+如需远程运维,优先走 SSH 隧道或跳板机;不要把 `3306` / `6379` 直接开到 `0.0.0.0`。
 
 后端对高危操作的保护:
 
@@ -151,4 +155,3 @@ docker compose exec server mysqldump -hmysql -ugpt2api -p \
 - `server` 可直接 `docker compose up -d --scale server=3`(需前面加 nginx/traefik)
 - `backups` 卷改成共享存储(NFS / S3 fuse),否则每个副本只能看到自己创建的备份
 - Redis 分布式锁已天然支持多副本,MySQL 和 JWT 密钥需统一
-
