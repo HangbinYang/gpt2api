@@ -186,8 +186,8 @@ func main() {
 	usageQDAO := usage.NewQueryDAO(sqldb)
 	adminUsageH := usage.NewAdminHandler(usageQDAO)
 	meUsageH := usage.NewMeHandler(usageQDAO)
-	meImageH := image.NewMeHandler(imageDAO)
-	adminImageH := image.NewAdminHandler(imageDAO)
+	var meImageH *image.MeHandler
+	var adminImageH *image.AdminHandler
 
 	mailSvc := mailer.New(mailer.Config{
 		Host:     cfg.SMTP.Host,
@@ -219,6 +219,8 @@ func main() {
 
 	// 把 settings 注入到其它受控业务(可热更)
 	keySvc.SetSettings(settingsSvc)
+	meImageH = image.NewMeHandler(imageDAO, settingsSvc)
+	adminImageH = image.NewAdminHandler(imageDAO, settingsSvc)
 	gwH.Settings = settingsSvc
 	sched.SetRuntime(scheduler.RuntimeParams{
 		DailyUsageRatio: settingsSvc.DailyUsageRatio,

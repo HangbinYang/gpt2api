@@ -11,12 +11,15 @@ import (
 
 // AdminHandler 管理员视角下的生成记录接口。
 type AdminHandler struct {
-	dao *DAO
+	dao      *DAO
+	settings interface {
+		SiteAPIBaseURL() string
+	}
 }
 
 // NewAdminHandler 构造。
-func NewAdminHandler(dao *DAO) *AdminHandler {
-	return &AdminHandler{dao: dao}
+func NewAdminHandler(dao *DAO, settings interface{ SiteAPIBaseURL() string }) *AdminHandler {
+	return &AdminHandler{dao: dao, settings: settings}
 }
 
 // List GET /api/admin/image-tasks
@@ -53,12 +56,16 @@ func (h *AdminHandler) List(c *gin.Context) {
 		ResultURLsParsed []string `json:"result_urls_parsed"`
 	}
 	out := make([]rowOut, 0, len(rows))
+	baseURL := ""
+	if h != nil && h.settings != nil {
+		baseURL = h.settings.SiteAPIBaseURL()
+	}
 	for _, r := range rows {
 		// 生成代理 URL 而不是直接返回上游 URL
 		fids := r.DecodeFileIDs()
 		urls := make([]string, 0, len(fids))
 		for i := range fids {
-			urls = append(urls, BuildProxyURL(r.TaskID, i, 24*time.Hour))
+			urls = append(urls, BuildPublicProxyURL(baseURL, r.TaskID, i, 24*time.Hour))
 		}
 		out = append(out, rowOut{
 			AdminTaskRow:     r,

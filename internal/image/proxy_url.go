@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -30,6 +32,34 @@ func BuildProxyURL(taskID string, idx int, ttl time.Duration) string {
 	expMs := time.Now().Add(ttl).UnixMilli()
 	sig := computeImgSig(taskID, idx, expMs)
 	return fmt.Sprintf("/p/img/%s/%d?exp=%d&sig=%s", taskID, idx, expMs, sig)
+}
+
+// BuildPublicProxyURL 在相对代理路径基础上按需补全 host。
+// apiBaseURL 允许填写完整的 /v1 地址,这里只提取 scheme://host[:port]。
+// 若 apiBaseURL 为空/非法,或 path 已经是绝对 URL,则保持原值不变。
+func BuildPublicProxyURL(apiBaseURL, taskID string, idx int, ttl time.Duration) string {
+	return WithPublicBaseURL(BuildProxyURL(taskID, idx, ttl), apiBaseURL)
+}
+
+// WithPublicBaseURL 为相对 URL 补全对外 host。只取 apiBaseURL 的 origin,忽略其 path/query。
+func WithPublicBaseURL(rawURL, apiBaseURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if u, err := url.Parse(rawURL); err == nil && u.IsAbs() {
+		return rawURL
+	}
+
+	base, err := url.Parse(strings.TrimSpace(apiBaseURL))
+	if err != nil || base == nil || base.Scheme == "" || base.Host == "" {
+		return rawURL
+	}
+	origin := base.Scheme + "://" + base.Host
+	if strings.HasPrefix(rawURL, "/") {
+		return origin + rawURL
+	}
+	return origin + "/" + rawURL
 }
 
 // ComputeImgSig 计算图片 URL 签名（供 gateway 验证使用）。

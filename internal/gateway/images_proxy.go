@@ -54,11 +54,15 @@ type ImageAccountResolver interface {
 // ImageProxyTTL 单条签名 URL 的默认有效期(24h,够前端离线展示一段时间)。
 const ImageProxyTTL = 24 * time.Hour
 
-// BuildImageProxyURL 生成代理 URL。返回绝对 path(不含 host),调用方可以直接拼或交给前端同 origin 使用。
-//
-// 默认 ttl=24h。前端展示一张历史图片,最多走一次上游获取 bytes,之后浏览器缓存即可。
-func BuildImageProxyURL(taskID string, idx int, ttl time.Duration) string {
-	return image.BuildProxyURL(taskID, idx, ttl)
+// publicImageProxyURL 生成对外图片 URL。
+// 若系统设置里填写了 API Base URL,则提取其 origin 并返回绝对 URL;
+// 否则继续返回相对路径,保持同源前端兼容。
+func (h *ImagesHandler) publicImageProxyURL(taskID string, idx int, ttl time.Duration) string {
+	baseURL := ""
+	if h != nil && h.Settings != nil {
+		baseURL = h.Settings.SiteAPIBaseURL()
+	}
+	return image.BuildPublicProxyURL(baseURL, taskID, idx, ttl)
 }
 
 // ImageProxy 按签名代理下载上游图片。无需 API Key,只靠 URL 签名校验。

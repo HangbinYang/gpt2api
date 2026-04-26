@@ -15,10 +15,17 @@ import (
 // MeHandler 面向当前用户的图片任务只读接口(JWT 鉴权)。
 // 与 /v1/images/tasks/:id(API Key 鉴权)共享同一张 image_tasks 表,
 // 只是入口改到 /api/me/images/* 便于前端面板调用。
-type MeHandler struct{ dao *DAO }
+type MeHandler struct {
+	dao      *DAO
+	settings interface {
+		SiteAPIBaseURL() string
+	}
+}
 
 // NewMeHandler 构造。
-func NewMeHandler(dao *DAO) *MeHandler { return &MeHandler{dao: dao} }
+func NewMeHandler(dao *DAO, settings interface{ SiteAPIBaseURL() string }) *MeHandler {
+	return &MeHandler{dao: dao, settings: settings}
+}
 
 // taskView 是对外返回的视图结构,解码 JSON 列 + 隐藏内部字段。
 type taskView struct {
@@ -42,7 +49,7 @@ type taskView struct {
 	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 }
 
-func toView(t *Task) taskView {
+func (h *MeHandler) toView(t *Task) taskView {
 	fids := t.DecodeFileIDs()
 	for i, id := range fids {
 		fids[i] = strings.TrimPrefix(id, "sed:")
@@ -50,8 +57,12 @@ func toView(t *Task) taskView {
 
 	// 生成代理 URL 而不是直接返回上游 URL（防止 403）
 	urls := make([]string, 0, len(fids))
+	baseURL := ""
+	if h != nil && h.settings != nil {
+		baseURL = h.settings.SiteAPIBaseURL()
+	}
 	for i := range fids {
-		urls = append(urls, BuildProxyURL(t.TaskID, i, 24*time.Hour))
+		urls = append(urls, BuildPublicProxyURL(baseURL, t.TaskID, i, 24*time.Hour))
 	}
 
 	return taskView{
@@ -110,7 +121,7 @@ func (h *MeHandler) List(c *gin.Context) {
 	}
 	items := make([]taskView, 0, len(tasks))
 	for i := range tasks {
-		items = append(items, toView(&tasks[i]))
+		items = append(items, h.toView(&tasks[i]))
 	}
 	resp.OK(c, gin.H{"items": items, "limit": limit, "offset": offset})
 }
@@ -155,5 +166,5 @@ func (h *MeHandler) Get(c *gin.Context) {
 		resp.Fail(c, 40400, "task not found")
 		return
 	}
-	resp.OK(c, toView(t))
+	resp.OK(c, h.toView(t))
 }

@@ -329,12 +329,12 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 			data, err := h.fetchAndProcessUpstreamImage(c.Request.Context(), res.AccountID, res.SignedURLs[i], req.Upscale)
 			if err != nil {
 				logger.L().Warn("fetch b64 image failed", zap.Error(err), zap.String("task_id", taskID))
-				d.URL = BuildImageProxyURL(taskID, i, ImageProxyTTL)
+				d.URL = h.publicImageProxyURL(taskID, i, ImageProxyTTL)
 			} else {
 				d.B64JSON = base64.StdEncoding.EncodeToString(data)
 			}
 		} else {
-			d.URL = BuildImageProxyURL(taskID, i, ImageProxyTTL)
+			d.URL = h.publicImageProxyURL(taskID, i, ImageProxyTTL)
 		}
 
 		out.Data = append(out.Data, d)
@@ -376,7 +376,7 @@ func (h *ImagesHandler) ImageTask(c *gin.Context) {
 	data := make([]ImageGenData, 0, len(urls))
 	fileIDs := t.DecodeFileIDs()
 	for i := range urls {
-		d := ImageGenData{URL: BuildImageProxyURL(t.TaskID, i, ImageProxyTTL)}
+		d := ImageGenData{URL: h.publicImageProxyURL(t.TaskID, i, ImageProxyTTL)}
 		if i < len(fileIDs) {
 			d.FileID = strings.TrimPrefix(fileIDs[i], "sed:")
 		}
@@ -532,7 +532,7 @@ func (h *ImagesHandler) handleChatAsImage(c *gin.Context, rec *usage.Log, ak *ap
 		if i > 0 {
 			sb.WriteString("\n\n")
 		}
-		sb.WriteString(fmt.Sprintf("![generated](%s)", BuildImageProxyURL(taskID, i, ImageProxyTTL)))
+		sb.WriteString(fmt.Sprintf("![generated](%s)", h.publicImageProxyURL(taskID, i, ImageProxyTTL)))
 	}
 	resp := ChatCompletionResponse{
 		ID:      "chatcmpl-" + uuid.NewString(),
@@ -902,12 +902,12 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 			data, err := h.fetchAndProcessUpstreamImage(c.Request.Context(), res.AccountID, res.SignedURLs[i], upscale)
 			if err != nil {
 				logger.L().Warn("fetch b64 image failed", zap.Error(err), zap.String("task_id", taskID))
-				d.URL = BuildImageProxyURL(taskID, i, ImageProxyTTL)
+				d.URL = h.publicImageProxyURL(taskID, i, ImageProxyTTL)
 			} else {
 				d.B64JSON = base64.StdEncoding.EncodeToString(data)
 			}
 		} else {
-			d.URL = BuildImageProxyURL(taskID, i, ImageProxyTTL)
+			d.URL = h.publicImageProxyURL(taskID, i, ImageProxyTTL)
 		}
 
 		out.Data = append(out.Data, d)
