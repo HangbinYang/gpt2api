@@ -101,9 +101,9 @@ function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-async function downloadImage(row: TaskRow, idx: number) {
+async function downloadImage(row: TaskRow, idx: number, opts?: { silent?: boolean }): Promise<boolean> {
   const url = row.result_urls_parsed?.[idx]
-  if (!url) return
+  if (!url) return false
   try {
     const resp = await fetch(url, { credentials: 'include' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -111,9 +111,15 @@ async function downloadImage(row: TaskRow, idx: number) {
     const ct = blob.type || 'image/png'
     const ext = ct.includes('jpeg') ? 'jpg' : ct.split('/')[1] || 'png'
     triggerDownload(blob, `${safeName(row.prompt)}-${row.task_id}-${idx + 1}.${ext}`)
-    ElMessage.success('开始下载')
+    if (!opts?.silent) {
+      ElMessage.success('开始下载')
+    }
+    return true
   } catch (e: any) {
-    ElMessage.error(`下载失败: ${e?.message || e || 'unknown error'}`)
+    if (!opts?.silent) {
+      ElMessage.error(`下载失败: ${e?.message || e || 'unknown error'}`)
+    }
+    return false
   }
 }
 
@@ -122,16 +128,15 @@ async function downloadAll(row: TaskRow) {
   if (!urls.length) return
   let ok = 0
   for (let i = 0; i < urls.length; i += 1) {
-    try {
-      await downloadImage(row, i)
+    if (await downloadImage(row, i, { silent: true })) {
       ok += 1
-      await new Promise((resolve) => setTimeout(resolve, 180))
-    } catch {
-      // 单张失败不影响其它图片
     }
+    await new Promise((resolve) => setTimeout(resolve, 180))
   }
-  if (ok > 1) {
+  if (ok > 0) {
     ElMessage.success(`已触发 ${ok} 张下载`)
+  } else {
+    ElMessage.error('批量下载失败')
   }
 }
 
