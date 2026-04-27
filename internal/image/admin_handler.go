@@ -2,6 +2,7 @@ package image
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,8 +41,24 @@ func (h *AdminHandler) List(c *gin.Context) {
 
 	f := AdminTaskFilter{
 		UserID:  userID,
-		Keyword: c.Query("keyword"),
-		Status:  c.Query("status"),
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+		Status:  strings.TrimSpace(c.Query("status")),
+	}
+	if raw := strings.TrimSpace(c.Query("start_at")); raw != "" {
+		tm, ok := parseFilterTime(raw)
+		if !ok {
+			resp.Fail(c, resp.CodeBadRequest, "start_at 格式错误")
+			return
+		}
+		f.Since = tm
+	}
+	if raw := strings.TrimSpace(c.Query("end_at")); raw != "" {
+		tm, ok := parseFilterTime(raw)
+		if !ok {
+			resp.Fail(c, resp.CodeBadRequest, "end_at 格式错误")
+			return
+		}
+		f.Until = tm.Add(time.Second)
 	}
 
 	rows, total, err := h.dao.ListAdmin(c.Request.Context(), f, size, (page-1)*size)
@@ -50,23 +67,17 @@ func (h *AdminHandler) List(c *gin.Context) {
 		return
 	}
 
-	// 把 result_urls JSON bytes 解成代理 URL 后输出
 	type rowOut struct {
 		AdminTaskRow
 		ResultURLsParsed []string `json:"result_urls_parsed"`
 	}
-	out := make([]rowOut, 0, len(rows))
 	baseURL := ""
 	if h != nil && h.settings != nil {
 		baseURL = h.settings.SiteAPIBaseURL()
 	}
+	out := make([]rowOut, 0, len(rows))
 	for _, r := range rows {
-		// 生成代理 URL 而不是直接返回上游 URL
-		fids := r.DecodeFileIDs()
-		urls := make([]string, 0, len(fids))
-		for i := range fids {
-			urls = append(urls, BuildPublicProxyURL(baseURL, r.TaskID, i, 24*time.Hour))
-		}
+		urls := BuildPublicImageURLs(baseURL, r.TaskID, r.DecodeFileIDs(), r.DecodeResultURLs())
 		out = append(out, rowOut{
 			AdminTaskRow:     r,
 			ResultURLsParsed: urls,

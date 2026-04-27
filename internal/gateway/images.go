@@ -301,6 +301,15 @@ func (h *ImagesHandler) ImageGenerations(c *gin.Context) {
 	rec.Status = usage.StatusSuccess
 	rec.CreditCost = cost
 	rec.ImageCount = len(res.SignedURLs)
+	// 实际产出张数:优先按 SignedURLs 计数,空时回落到请求张数,
+	// 兜底再回落到 1 —— 旧版只写 0 会让"图片张数"统计长期偏小。
+	rec.ImageCount = len(res.SignedURLs)
+	if rec.ImageCount <= 0 {
+		rec.ImageCount = req.N
+	}
+	if rec.ImageCount <= 0 {
+		rec.ImageCount = 1
+	}
 
 	// 8) DAO 回写 credit_cost(Runner 已经 MarkSuccess,这里只补 credit_cost)
 	if h.DAO != nil {
@@ -525,6 +534,11 @@ func (h *ImagesHandler) handleChatAsImage(c *gin.Context, rec *usage.Log, ak *ap
 	rec.CreditCost = cost
 	rec.ImageCount = len(res.SignedURLs)
 	rec.DurationMs = int(time.Since(startAt).Milliseconds())
+	// chat-as-image 单轮固定 N=1,这里也按 SignedURLs 兜底,避免 0 张统计漂移。
+	rec.ImageCount = len(res.SignedURLs)
+	if rec.ImageCount <= 0 {
+		rec.ImageCount = 1
+	}
 
 	// 以 chat 响应返回(content 里内嵌 markdown 图片)。
 	var sb strings.Builder
@@ -877,6 +891,12 @@ func (h *ImagesHandler) ImageEdits(c *gin.Context) {
 	rec.Status = usage.StatusSuccess
 	rec.CreditCost = cost
 	rec.ImageCount = len(res.SignedURLs)
+	if rec.ImageCount <= 0 {
+		rec.ImageCount = n
+	}
+	if rec.ImageCount <= 0 {
+		rec.ImageCount = 1
+	}
 	if h.DAO != nil {
 		updateCtx, cancelUpdate := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := h.DAO.UpdateCost(updateCtx, taskID, cost); err != nil {

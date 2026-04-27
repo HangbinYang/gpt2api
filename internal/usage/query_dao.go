@@ -186,10 +186,14 @@ LIMIT ? OFFSET ?`, where)
 // Overall 汇总。
 func (d *QueryDAO) Overall(ctx context.Context, f Filter) (Overall, error) {
 	where, args := d.buildWhere(f)
+	// image_count 兜底:历史成功记录可能 image_count=0,按 1 张计入,
+	// 避免老数据让"图片张数"看起来始终偏小。CASE 表达式只对
+	// type='image' 且 status='success' 生效;失败 / 队列中的不补。
 	q := fmt.Sprintf(`
 SELECT COUNT(*)                                                                AS requests,
        COALESCE(SUM(CASE WHEN u.status = 'failed' THEN 1 ELSE 0 END), 0)       AS failures,
        COALESCE(SUM(CASE WHEN u.type   = 'chat'   THEN 1 ELSE 0 END), 0)       AS chat_requests,
+       COALESCE(SUM(`+imageCountExpr+`), 0)                                    AS image_images,
        COALESCE(SUM(`+imageCountExpr+`), 0)                                    AS image_images,
        COALESCE(SUM(u.input_tokens),  0)                                       AS input_tokens,
        COALESCE(SUM(u.output_tokens), 0)                                       AS output_tokens,
@@ -217,6 +221,7 @@ SELECT u.model_id,
        COALESCE(SUM(CASE WHEN u.status='failed' THEN 1 ELSE 0 END), 0) AS failures,
        COALESCE(SUM(u.input_tokens),  0)                   AS input_tokens,
        COALESCE(SUM(u.output_tokens), 0)                   AS output_tokens,
+       COALESCE(SUM(`+imageCountExpr+`), 0)                AS image_count,
        COALESCE(SUM(`+imageCountExpr+`), 0)                AS image_count,
        COALESCE(SUM(u.credit_cost),   0)                   AS credit_cost,
        /* AVG 返回 DECIMAL(driver 会给 []uint8),必须 CAST 回整数才能 scan 进 int64 */
@@ -275,6 +280,7 @@ SELECT DATE_FORMAT(u.created_at, '%%Y-%%m-%%d')            AS day,
        COALESCE(SUM(CASE WHEN u.status='failed' THEN 1 ELSE 0 END), 0) AS failures,
        COALESCE(SUM(u.input_tokens),  0)                   AS input_tokens,
        COALESCE(SUM(u.output_tokens), 0)                   AS output_tokens,
+       COALESCE(SUM(`+imageCountExpr+`), 0)                AS image_count,
        COALESCE(SUM(`+imageCountExpr+`), 0)                AS image_count,
        COALESCE(SUM(u.credit_cost),   0)                   AS credit_cost
 FROM usage_logs u

@@ -54,6 +54,11 @@ type ImageAccountResolver interface {
 // ImageProxyTTL 单条签名 URL 的默认有效期(24h,够前端离线展示一段时间)。
 const ImageProxyTTL = 24 * time.Hour
 
+// BuildImageProxyURL 生成代理 URL。返回绝对 path(不含 host),调用方可以直接拼或交给前端同 origin 使用。
+func BuildImageProxyURL(taskID string, idx int, ttl time.Duration) string {
+	return image.BuildProxyURL(taskID, idx, ttl)
+}
+
 // publicImageProxyURL 生成对外图片 URL。
 // 若系统设置里填写了 API Base URL,则提取其 origin 并返回绝对 URL;
 // 否则继续返回相对路径,保持同源前端兼容。
@@ -62,15 +67,35 @@ func (h *ImagesHandler) publicImageProxyURL(taskID string, idx int, ttl time.Dur
 	if h != nil && h.Settings != nil {
 		baseURL = h.Settings.SiteAPIBaseURL()
 	}
-	return image.BuildPublicProxyURL(baseURL, taskID, idx, ttl)
+	return image.WithPublicBaseURL(BuildImageProxyURL(taskID, idx, ttl), baseURL)
+}
+
+// parseIntDefault 安全解析整数:空 / 解析失败时回退到 def。
+func parseIntDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // ImageProxy 按签名代理下载上游图片。无需 API Key,只靠 URL 签名校验。
+//
+// 新增查询参数 thumb_kb(0~64):
+//   - 0:返回原图(走 upscale 逻辑)
+//   - >0:跳过 upscale,直接把上游原图压成 ≤ thumb_kb KB 的 JPEG 缩略图返回
+//     —— 用于前端列表预览,显著降低下载体积和首屏延迟。
+//
+// 命中缩略图路径时,响应头会附带 X-Thumb-KB,便于前端 / 旁路确认是否生效。
 func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	idxStr := c.Param("idx")
 	expStr := c.Query("exp")
 	sig := c.Query("sig")
+	thumbKB := image.ClampThumbKB(parseIntDefault(c.Query("thumb_kb"), 0))
 
 	if taskID == "" || idxStr == "" || expStr == "" || sig == "" {
 		c.AbortWithStatus(http.StatusBadRequest)
@@ -78,11 +103,6 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	}
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 0 || idx > 64 {
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
-	}
-	thumbKB, err := strconv.Atoi(c.DefaultQuery("thumb_kb", "0"))
-	if err != nil || thumbKB < 0 || thumbKB > 64 {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
@@ -110,7 +130,7 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	ref := fids[idx] // 可能是 "sed:xxxx" 或 "xxxx"
+	ref := fids[idx]
 	if t.AccountID == 0 || h.ImageAccResolver == nil {
 		c.AbortWithStatus(http.StatusServiceUnavailable)
 		return
@@ -149,11 +169,9 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 		return
 	}
 
-	// 按需放大:若 task 上打了 upscale 标记,先走进程内 LRU,命中则直接返回。
-	// 未命中再拉原图,放大成 PNG 后写入缓存。
 	scale := image.ValidateUpscale(t.Upscale)
 	if thumbKB > 0 {
-		scale = ""
+		scale = image.UpscaleNone
 	}
 	cacheKey := ""
 	if scale != "" {
@@ -176,21 +194,18 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 	if ct == "" {
 		ct = "image/png"
 	}
+
 	if thumbKB > 0 {
-		thumbBytes, thumbCT, err := image.MakeThumbJPEG(body, thumbKB*1024)
-		if err != nil {
-			logger.L().Warn("image proxy thumb",
-				zap.Error(err), zap.String("task_id", taskID),
-				zap.Int("thumb_kb", thumbKB))
-		} else {
-			body = thumbBytes
-			ct = thumbCT
+		if data, ctThumb, ok := image.MakeThumbnail(body, thumbKB); ok {
+			c.Header("Cache-Control", "private, max-age=86400")
 			c.Header("X-Thumb-KB", strconv.Itoa(thumbKB))
+			c.Data(http.StatusOK, ctThumb, data)
+			return
 		}
+		c.Header("X-Thumb-KB", strconv.Itoa(thumbKB)+";miss")
 	}
 
 	if scale != "" {
-		// 并发闸:避免 4K 请求风暴把 CPU 打满影响生图主流程
 		imageUpscaleCache.Acquire()
 		upBytes, upCT, err := image.DoUpscale(body, scale)
 		imageUpscaleCache.Release()
@@ -198,7 +213,6 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 			logger.L().Warn("image proxy upscale",
 				zap.Error(err), zap.String("task_id", taskID),
 				zap.String("scale", scale))
-			// 放大失败:回落到原图,不让用户看到白屏
 			c.Header("Cache-Control", "private, max-age=1800")
 			c.Header("X-Upscale", scale+";err")
 			c.Data(http.StatusOK, ct, body)
@@ -212,7 +226,6 @@ func (h *ImagesHandler) ImageProxy(c *gin.Context) {
 			imageUpscaleCache.Put(cacheKey, body, ct)
 			c.Header("X-Upscale", scale+";cache=miss")
 		} else {
-			// DoUpscale 也可能因"原图长边已足够大"而直接返回原字节
 			c.Header("X-Upscale", scale+";noop")
 		}
 		c.Header("Cache-Control", "private, max-age=3600")

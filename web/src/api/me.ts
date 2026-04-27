@@ -133,6 +133,7 @@ export interface ImageTask {
   prompt: string
   n: number
   size: string
+  upscale?: string
   status: 'queued' | 'dispatched' | 'running' | 'success' | 'failed' | string
   conversation_id?: string
   error?: string
@@ -144,6 +145,10 @@ export interface ImageTask {
   finished_at?: string | null
 }
 
+// listMyImageTasks 个人图片任务历史。
+//   - status            queued | dispatched | running | success | failed
+//   - keyword           prompt 模糊匹配
+//   - start_at, end_at  时间区间;后端兼容 RFC3339 / "YYYY-MM-DD HH:mm:ss" / "YYYY-MM-DD"
 export function listMyImageTasks(params: {
   limit?: number
   offset?: number
@@ -151,7 +156,7 @@ export function listMyImageTasks(params: {
   keyword?: string
   start_at?: string
   end_at?: string
-} = {}): Promise<{ items: ImageTask[]; limit: number; offset: number }> {
+} = {}): Promise<{ items: ImageTask[]; total: number; limit: number; offset: number }> {
   return http.get('/api/me/images/tasks', { params })
 }
 

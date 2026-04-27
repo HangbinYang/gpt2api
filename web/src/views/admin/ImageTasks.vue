@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { http } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
@@ -29,9 +29,16 @@ const total = ref(0)
 const filter = reactive({
   keyword: '',
   status: '',
+  range: [] as string[],
   page: 1,
   page_size: 20,
 })
+
+function withThumb(url: string, kb = 10): string {
+  if (!url) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}thumb_kb=${kb}`
+}
 
 async function fetchList() {
   loading.value = true
@@ -42,9 +49,13 @@ async function fetchList() {
     }
     if (filter.keyword) params.keyword = filter.keyword
     if (filter.status) params.status = filter.status
-    const d = await http.get<any, any>('/api/admin/image-tasks', { params })
-    rows.value = d.list || []
-    total.value = d.total || 0
+    if (filter.range.length === 2) {
+      params.start_at = filter.range[0]
+      params.end_at = filter.range[1]
+    }
+    const data = await http.get<any, any>('/api/admin/image-tasks', { params })
+    rows.value = data.list || []
+    total.value = data.total || 0
   } finally {
     loading.value = false
   }
@@ -54,73 +65,74 @@ function onSearch() {
   filter.page = 1
   fetchList()
 }
+
 function onReset() {
   filter.keyword = ''
   filter.status = ''
+  filter.range = []
   filter.page = 1
   fetchList()
 }
 
-// 弹窗预览图片
 const previewDlg = ref(false)
 const previewRow = ref<TaskRow | null>(null)
-const previewIndex = ref(0)
-const activePreviewURL = computed(() => {
-  const urls = previewRow.value?.result_urls_parsed || []
-  return urls[previewIndex.value] || ''
-})
-function openPreview(row: TaskRow, index = 0) {
+const previewIdx = ref(0)
+const previewUrls = computed<string[]>(() => previewRow.value?.result_urls_parsed || [])
+const currentPreview = computed<string>(() => previewUrls.value[previewIdx.value] || '')
+
+function openPreview(row: TaskRow, idx = 0) {
   previewRow.value = row
-  previewIndex.value = index
+  previewIdx.value = idx
   previewDlg.value = true
 }
-function selectPreview(index: number) {
-  previewIndex.value = index
+
+function safeName(s: string) {
+  return (s || 'image').replace(/[\\/:*?"<>|]/g, '_').slice(0, 24) || 'image'
 }
 
-async function downloadURL(url: string, filename: string) {
-  const resp = await fetch(url, { credentials: 'include' })
-  if (!resp.ok) throw new Error(`download ${resp.status}`)
-  const blob = await resp.blob()
-  const href = URL.createObjectURL(blob)
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = href
+  a.href = url
   a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(href)
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-function safeName(s: string) {
-  return (s || 'image').replace(/[\\\\/:*?"<>|]/g, '_').slice(0, 24) || 'image'
-}
-
-async function downloadOne(row: TaskRow, index = 0) {
-  const url = row.result_urls_parsed?.[index]
+async function downloadImage(row: TaskRow, idx: number) {
+  const url = row.result_urls_parsed?.[idx]
   if (!url) return
   try {
-    await downloadURL(url, `${safeName(row.prompt)}-${row.task_id}-${index + 1}.jpg`)
+    const resp = await fetch(url, { credentials: 'include' })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const ct = blob.type || 'image/png'
+    const ext = ct.includes('jpeg') ? 'jpg' : ct.split('/')[1] || 'png'
+    triggerDownload(blob, `${safeName(row.prompt)}-${row.task_id}-${idx + 1}.${ext}`)
     ElMessage.success('开始下载')
-  } catch {
-    ElMessage.error('下载失败')
+  } catch (e: any) {
+    ElMessage.error(`下载失败: ${e?.message || e || 'unknown error'}`)
   }
 }
 
-async function downloadBatch(row: TaskRow) {
+async function downloadAll(row: TaskRow) {
   const urls = row.result_urls_parsed || []
-  if (urls.length === 0) return
+  if (!urls.length) return
   let ok = 0
   for (let i = 0; i < urls.length; i += 1) {
     try {
-      await downloadURL(urls[i], `${safeName(row.prompt)}-${row.task_id}-${i + 1}.jpg`)
+      await downloadImage(row, i)
       ok += 1
-      await new Promise((resolve) => setTimeout(resolve, 120))
+      await new Promise((resolve) => setTimeout(resolve, 180))
     } catch {
-      // 跳过失败项，继续后续下载
+      // 单张失败不影响其它图片
     }
   }
-  ElMessage[ok > 0 ? 'success' : 'error'](ok > 0 ? `已触发 ${ok} 张下载` : '批量下载失败')
+  if (ok > 1) {
+    ElMessage.success(`已触发 ${ok} 张下载`)
+  }
 }
 
 const statusColor: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'primary'> = {
@@ -143,13 +155,25 @@ onMounted(fetchList)
       </div>
 
       <el-form inline class="flex-wrap-gap" @submit.prevent="onSearch">
-        <el-input v-model="filter.keyword" placeholder="提示词 / 邮箱" clearable style="width:260px" />
+        <el-input v-model="filter.keyword" placeholder="提示词 / 邮箱" clearable style="width:240px" />
         <el-select v-model="filter.status" placeholder="状态" clearable style="width:130px">
           <el-option label="成功" value="success" />
           <el-option label="失败" value="failed" />
           <el-option label="运行中" value="running" />
           <el-option label="队列中" value="queued" />
+          <el-option label="已分发" value="dispatched" />
         </el-select>
+        <el-date-picker
+          v-model="filter.range"
+          type="datetimerange"
+          unlink-panels
+          range-separator="~"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          format="YYYY-MM-DD HH:mm"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          style="width:340px"
+        />
         <el-button type="primary" @click="onSearch"><el-icon><Search /></el-icon> 查询</el-button>
         <el-button @click="onReset">重置</el-button>
       </el-form>
@@ -178,22 +202,34 @@ onMounted(fetchList)
             <el-tag :type="statusColor[row.status] || 'info'" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="结果" width="190">
+        <el-table-column label="结果" min-width="240">
           <template #default="{ row }">
-            <div v-if="row.result_urls_parsed?.length" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <el-button
-                type="primary" link size="small"
-                @click="openPreview(row)"
-              >放大({{ row.result_urls_parsed.length }})</el-button>
-              <el-button
-                type="success" link size="small"
-                @click="downloadOne(row)"
-              >下载</el-button>
-              <el-button
-                v-if="row.result_urls_parsed.length > 1"
-                type="warning" link size="small"
-                @click="downloadBatch(row)"
-              >批量下载</el-button>
+            <div v-if="row.result_urls_parsed?.length" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="display:flex;gap:4px;flex-wrap:wrap">
+                <img
+                  v-for="(url, idx) in row.result_urls_parsed.slice(0, 3)"
+                  :key="idx"
+                  :src="withThumb(url)"
+                  alt=""
+                  loading="lazy"
+                  style="width:44px;height:44px;border-radius:4px;object-fit:cover;cursor:zoom-in;border:1px solid var(--el-border-color-lighter)"
+                  @click="openPreview(row, idx)"
+                />
+                <div
+                  v-if="row.result_urls_parsed.length > 3"
+                  style="width:44px;height:44px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--el-fill-color-light);cursor:pointer"
+                  @click="openPreview(row, 3)"
+                >+{{ row.result_urls_parsed.length - 3 }}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <el-button type="primary" link size="small" @click="openPreview(row, 0)">放大</el-button>
+                <el-button type="success" link size="small" @click="downloadImage(row, 0)">下载首张</el-button>
+                <el-button
+                  v-if="row.result_urls_parsed.length > 1"
+                  type="warning" link size="small"
+                  @click="downloadAll(row)"
+                >全部下载</el-button>
+              </div>
             </div>
             <span v-else-if="row.error" style="font-size:11px;color:var(--el-color-danger)" :title="row.error">失败</span>
             <span v-else style="color:var(--el-text-color-secondary)">-</span>
@@ -216,53 +252,55 @@ onMounted(fetchList)
       <el-pagination
         style="margin-top:16px;justify-content:flex-end;display:flex"
         :current-page="filter.page"
-        @current-change="(p: number) => { filter.page = p; fetchList() }"
         :page-size="filter.page_size"
-        @size-change="(s: number) => { filter.page_size = s; filter.page = 1; fetchList() }"
         :total="total"
         :page-sizes="[20, 50, 100]"
         layout="total, sizes, prev, pager, next"
+        @current-change="(p: number) => { filter.page = p; fetchList() }"
+        @size-change="(s: number) => { filter.page_size = s; filter.page = 1; fetchList() }"
       />
     </div>
 
-    <!-- 图片预览弹窗 -->
     <el-dialog v-model="previewDlg" title="生成结果预览" width="820px">
       <div v-if="previewRow">
         <div style="font-size:13px;color:var(--el-text-color-secondary);margin-bottom:10px;word-break:break-all">
           {{ previewRow.prompt }}
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px">
-          <el-button size="small" type="success" @click="downloadOne(previewRow, previewIndex)">下载当前</el-button>
-          <el-button
-            v-if="previewRow.result_urls_parsed.length > 1"
-            size="small"
-            type="warning"
-            @click="downloadBatch(previewRow)"
-          >批量下载</el-button>
+        <div style="display:flex;justify-content:center;align-items:center;background:var(--el-fill-color-darker);border-radius:6px;padding:8px;min-height:360px">
+          <el-image
+            :src="currentPreview"
+            :preview-src-list="previewUrls"
+            :initial-index="previewIdx"
+            fit="contain"
+            style="max-height:60vh;max-width:100%;cursor:zoom-in"
+          >
+            <template #placeholder>
+              <div style="padding:20px;color:var(--el-text-color-secondary)">加载中…</div>
+            </template>
+          </el-image>
         </div>
-        <div style="display:flex;align-items:center;justify-content:center;min-height:360px;background:var(--el-fill-color-lighter);border-radius:8px;padding:12px">
+        <div
+          v-if="previewUrls.length > 1"
+          style="display:flex;gap:6px;margin-top:10px;overflow-x:auto;padding-bottom:4px"
+        >
           <img
-            v-if="activePreviewURL"
-            :src="activePreviewURL"
-            alt="preview"
-            style="max-width:100%;max-height:60vh;object-fit:contain;border-radius:6px"
+            v-for="(url, idx) in previewUrls"
+            :key="idx"
+            :src="withThumb(url, 16)"
+            alt=""
+            loading="lazy"
+            :class="['preview-thumb', { active: previewIdx === idx }]"
+            @click="previewIdx = idx"
           />
         </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
-          <div
-            v-for="(url, idx) in previewRow.result_urls_parsed"
-            :key="idx"
-            style="width:96px;height:96px;border-radius:6px;overflow:hidden;cursor:pointer;border:2px solid transparent"
-            :style="{ borderColor: idx === previewIndex ? 'var(--el-color-primary)' : 'transparent' }"
-            @click="selectPreview(idx)"
-          >
-            <el-image
-              :src="url"
-              fit="cover"
-              style="width:96px;height:96px"
-              lazy
-            />
-          </div>
+        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
+          <el-button size="small" @click="downloadImage(previewRow, previewIdx)">下载当前</el-button>
+          <el-button
+            v-if="previewUrls.length > 1"
+            size="small"
+            type="primary"
+            @click="downloadAll(previewRow)"
+          >全部下载</el-button>
         </div>
         <div v-if="previewRow.error" style="margin-top:12px;color:var(--el-color-danger);font-size:12px;word-break:break-all">
           错误:{{ previewRow.error }}
@@ -271,3 +309,19 @@ onMounted(fetchList)
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.preview-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  object-fit: cover;
+  cursor: pointer;
+  border: 2px solid transparent;
+  flex-shrink: 0;
+}
+
+.preview-thumb.active {
+  border-color: var(--el-color-primary);
+}
+</style>
